@@ -2,7 +2,8 @@ name: l3-goes
 channels:
   - conda-forge
 dependencies:
-  - python=3.7
+  - python=3.8
   - xarray
   - netCDF4
   - s3fs
+  - h5netcdf
