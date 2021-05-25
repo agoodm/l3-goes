@@ -1,0 +1,7 @@
+name: l3-goes
+channels:
+  - conda-forge
+dependencies:
+  - python=3.7
+  - xarray
+  - s3fs
