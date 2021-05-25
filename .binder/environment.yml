@@ -4,4 +4,5 @@ channels:
 dependencies:
   - python=3.7
   - xarray
+  - netCDF4
   - s3fs
