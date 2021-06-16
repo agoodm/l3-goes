@@ -17,6 +17,7 @@ def index_to_dt(i, sat, variable, domain):
     return str(dt.year), str(dt.dayofyear).zfill(3)
 
 def process_l2_goes(sat, variable, domain, year, day, hour):
+    pvar = variable if not variable.endswith('P') else variable[:-1]
     s3path = f'noaa-goes{sat}/ABI-L2-{variable}{domain}/{year}/{day}/{hour}/*'
     print(f'Checking: {s3path}')
     idx = xr.open_dataset(f'/mnt/efs/data/util/idx_{sat}_{domain}.nc')
@@ -27,10 +28,22 @@ def process_l2_goes(sat, variable, domain, year, day, hour):
     print('Files found:')
     for p in paths:
         print(p)
-    files = [fs.open(fname) for fname in paths]
-    datasets = [xr.open_dataset(f) for f in files]
+    datasets = []
+    for fname in paths:
+        try:
+            f = fs.open(fname)
+            fds = xr.open_dataset(f, engine='h5netcdf', decode_times=False)
+            if 'pressure' in fds:
+                fds = fds.isel(pressure=slice(0, 38))
+            datasets.append(fds)
+        except Exception as e:
+            print(f'Could not open file: {fname}')
+            print(e)
+    if not datasets:
+        print('Could not open any files. Exiting...')
+        return
     ds = xr.concat(datasets, dim='t')
-    dropped = set(ds.variables.keys()).difference([variable, 'x', 'y', 't', 'pressure'])
+    dropped = set(ds.variables.keys()).difference([pvar, 'x', 'y', 't', 'pressure'])
     mask = ds.DQF_Overall == 0
     dsm = ds.drop_vars(dropped).where(mask).mean('t').stack(grid=['y', 'x']).reset_index('grid')
     dsg = dsm.isel(grid=idx.pixel_index).mean('pix')
@@ -40,7 +53,8 @@ def process_l2_goes(sat, variable, domain, year, day, hour):
                                    .sum('pix')
                                    .sum('t'))
     prefix = os.path.basename(paths[0]).split('_s')[0].replace('L2', 'L3')
-    ts = pd.Timestamp(ds.t.values[0]).strftime('%Y%m%d')
+    time = pd.to_datetime(f'{year}-{day}-{hour}-30', format='%Y-%j-%H-%M')
+    ts = time.strftime('%Y%m%d')
     fname = f'/mnt/efs/data/goes/{sat}/{domain}/{variable}/{prefix}_{ts}T{hour}30Z.nc'
     if os.path.exists(fname):
         os.remove(fname)
@@ -52,8 +66,8 @@ def process_l2_goes(sat, variable, domain, year, day, hour):
     ds_out.pixel_count.attrs['description'] = 'Number of geostationary projection pixels binned to MERRA2 grid cell'
     ds_out.pixel_count.attrs['long_name'] = 'Pixel Count'
     ds_out = ds_out.assign_coords(time=pd.Timestamp(f'{ts}T{hour}30'))
-    dropped = set(ds_out.variables.keys()).difference([variable, 'lat', 'lon', 'time', 'pressure', 'good_pixel_count', 'pixel_count'])
-    ds_out = ds_out.drop_vars(dropped)
+    dropped = set(ds_out.variables.keys()).difference([pvar, 'lat', 'lon', 'time', 'pressure', 'good_pixel_count', 'pixel_count'])
+    ds_out = ds_out.drop_vars(dropped).assign_coords(time=time).expand_dims('time')
     if 'pressure' in ds_out:
         ds_out.pressure.attrs['units'] = 'hPa'
     print('Processing Finished. Saving output...')
